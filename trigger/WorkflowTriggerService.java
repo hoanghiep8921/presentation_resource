@@ -15,6 +15,7 @@ import com.vnpay.workflow_engine.constants.Constant;
 import com.vnpay.workflow_engine.dto.TriggerWorkflowEvent;
 import com.vnpay.workflow_engine.dto.WorkflowActionState;
 import com.vnpay.workflow_engine.dto.WorkflowUpdateEvent;
+import com.vnpay.workflow_engine.service.WorkflowCompletionService;
 import com.vnpay.workflow_engine.service.WorkflowExecutionService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -45,6 +46,7 @@ public class WorkflowTriggerService {
     private final WorkFlowsRepository workflowRepository;
     private final ConditionEvaluatorService conditionEvaluator;
     private final WorkflowExecutionService workflowExecutionService;
+    private final WorkflowCompletionService completionService;
     private final ObjectMapper objectMapper;
     private final StringRedisTemplate redisTemplate;
     private final MongoTemplate mongoTemplate;
@@ -99,6 +101,10 @@ public class WorkflowTriggerService {
                     ticketId
             );
 
+            // Distributed semaphore: tổng số workflow cần hoàn thành cho ticket
+            // ở event này. Mỗi workflow xong/skip/error sẽ decrement key.
+            completionService.initCounter(event, candidateWorkflows.size());
+
             for (WorkFlow workflow : candidateWorkflows) {
 
                 try {
@@ -113,6 +119,8 @@ public class WorkflowTriggerService {
                             ticketId,
                             ex
                     );
+
+                    completionService.notifyWorkflowDone(event);
                 }
             }
 
@@ -152,6 +160,7 @@ public class WorkflowTriggerService {
                     workflowId
             );
 
+            completionService.notifyWorkflowDone(event);
             return;
         }
 
@@ -171,6 +180,7 @@ public class WorkflowTriggerService {
                     workflowId
             );
 
+            completionService.notifyWorkflowDone(event);
             return;
         }
 
@@ -188,6 +198,7 @@ public class WorkflowTriggerService {
                     workflowId
             );
 
+            completionService.notifyWorkflowDone(event);
             return;
         }
 

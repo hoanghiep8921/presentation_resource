@@ -85,20 +85,22 @@ public class DelayActionHandler extends ConditionActionHandler {
                 scheduledAt
         );
 
-        if (!event.isTestWorkflow()) {
-            publishDelayEvent(
-                    context,
-                    event,
-                    scheduledAt
-            );
+        Map<String, Object> payload = Map.of(
+                "scheduledAt", scheduledAt,
+                "delayType", nodeData.getSubActionType()
+        );
+
+        // Test mode (doc D.3): bỏ qua wait, đi tiếp ngay để portal preview timeline.
+        if (event.isTestWorkflow()) {
+            return ActionResult.success(payload);
         }
 
-        return ActionResult.success(
-                Map.of(
-                        "scheduledAt", scheduledAt,
-                        "delayType", nodeData.getSubActionType()
-                )
-        );
+        // Production: publish Kafka self-loop và PAUSE branch.
+        // Khi đến giờ, WorkflowEventConsumer.listenDelayEvent sẽ resume
+        // và gọi lại executor để chạy tiếp node sau DELAY.
+        publishDelayEvent(context, event, scheduledAt);
+
+        return ActionResult.waiting(payload);
     }
 
     private void publishDelayEvent(

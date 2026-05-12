@@ -14,11 +14,43 @@ import java.util.Objects;
 @Slf4j
 public class WorkflowNavigator {
 
+    /**
+     * Quyết định node(s) tiếp theo từ kết quả của handler hiện tại.
+     *
+     *  1. WAITING / SKIPPED → dừng branch (List rỗng).
+     *  2. Handler chỉ định `nextNodeId` (vd Switch match được 1 branch)
+     *     → đi đúng node đó, bỏ qua các edge khác.
+     *  3. FAILED → đi theo edge `red` (error path).
+     *  4. SUCCESS → đi theo tất cả edge không phải `red`.
+     */
     public List<WorkflowNode> nextNodes(
             WorkFlow workflow,
             WorkflowNode currentNode,
             ActionResult result
     ) {
+
+        if (result.isWaiting() || result.isSkipped()) {
+            return List.of();
+        }
+
+        String pinnedNextId = result.nextNodeId();
+
+        if (pinnedNextId != null) {
+
+            WorkflowNode pinned = findNode(workflow, pinnedNextId);
+
+            if (pinned == null) {
+
+                log.warn(
+                        "Pinned nextNodeId not found in workflow. nextNodeId={}",
+                        pinnedNextId
+                );
+
+                return List.of();
+            }
+
+            return List.of(pinned);
+        }
 
         boolean failed = result.isFailed();
 

@@ -10,7 +10,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Queue;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -21,15 +25,43 @@ public class WorkflowExecutor {
     private final WorkflowNavigator workflowNavigator;
     private final WorkflowHistoryService historyService;
 
+    /**
+     * BFS toàn workflow.
+     *   - Lưu MEET_ENROLLMENT cho start node ngay khi vào.
+     *   - Mỗi node action: chạy handler → save history → quyết định branch tiếp.
+     *   - WAITING (DELAY) → dừng branch, sẽ resume bởi Kafka self-loop.
+     *   - END_NODE → saveCompletion (kéo theo decrement counter, update ticket).
+     *   - visited set chống cycle (ngay cả khi user vẽ sai hoặc GOTO_ACTION loop).
+     */
     public void execute(
             WorkflowContext context,
             WorkflowEvent event
     ) {
 
+        WorkflowNode startNode = context.getCurrentNode();
+
+        if (startNode == null) {
+            log.warn(
+                    "Workflow has no start node. workflowId={}",
+                    context.getWorkflow().getId()
+            );
+            return;
+        }
+
+        historyService.saveEnrollment(context, event);
+
         Queue<WorkflowNode> queue = new LinkedList<>();
         Set<String> visited = new HashSet<>();
 
-        queue.add(context.getCurrentNode());
+        visited.add(startNode.getId());
+
+        queue.addAll(
+                workflowNavigator.nextNodes(
+                        context.getWorkflow(),
+                        startNode,
+                        ActionResult.success()
+                )
+        );
 
         while (!queue.isEmpty()) {
 
@@ -66,21 +98,29 @@ public class WorkflowExecutor {
         );
 
         if (workflowNavigator.isEndNode(node)) {
-
-            historyService.completeWorkflow(context, event);
-
+            historyService.saveCompletion(context, event);
             return;
         }
 
-        String actionType = node.getData().getActionType();
-
         AbstractActionHandler handler =
-                actionHandlerFactory.getHandler(actionType);
+                actionHandlerFactory.getHandler(
+                        node.getData().getActionType()
+                );
 
-        ActionResult result =
-                handler.execute(context, event);
+        ActionResult result = handler.execute(context, event);
 
         historyService.save(context, event, result);
+
+        if (result.isWaiting()) {
+
+            log.info(
+                    "Branch paused (WAITING). workflowId={}, nodeId={}",
+                    rootContext.getWorkflow().getId(),
+                    node.getId()
+            );
+
+            return;
+        }
 
         List<WorkflowNode> nextNodes =
                 workflowNavigator.nextNodes(
